@@ -1,338 +1,185 @@
 import html
 from pathlib import Path
-import re
+import random
 
+import numpy as np
 import pandas as pd
-from openpyxl import load_workbook
 
-INPUT_FILE = Path("dashboard.xlsx")
 OUTPUT_HTML = Path("ai_dashboard.html")
 OUTPUT_SITE_DIR = Path("docs")
 OUTPUT_SITE_HTML = OUTPUT_SITE_DIR / "index.html"
 OUTPUT_NOJEKYLL = OUTPUT_SITE_DIR / ".nojekyll"
 OUTPUT_DATA_DIR = Path("dashboard_exports")
-OUTPUT_DATA_INDEX = OUTPUT_DATA_DIR / "dataset_index.csv"
-OUTPUT_SUGGESTIONS_CSV = OUTPUT_DATA_DIR / "dashboard_suggestions.csv"
+OUTPUT_DATA_CSV = OUTPUT_DATA_DIR / "sales_performance_dataset.csv"
+OUTPUT_REP_CSV = OUTPUT_DATA_DIR / "top_sales_reps.csv"
+OUTPUT_YEAR_CSV = OUTPUT_DATA_DIR / "yearly_summary.csv"
 
-PREFERRED_LABEL_NAMES = ("month", "date", "day", "category", "region", "name", "label", "segment", "type")
+MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+MONTH_ORDER = {month: index for index, month in enumerate(MONTHS, start=1)}
 PALETTE = ["#0f766e", "#f59e0b", "#dc2626", "#2563eb", "#7c3aed", "#16a34a", "#ea580c", "#0891b2"]
-IGNORED_SHEET_NAMES = {"dashboard"}
 
 
-def slugify(value):
-    slug = re.sub(r"[^a-z0-9]+", "-", str(value).lower()).strip("-")
-    return slug or "dataset"
+def build_sales_dataframe():
+    np.random.seed(42)
+    random.seed(42)
+
+    n = 1000
+    regions = ["North", "South", "East", "West", "Central"]
+    products = ["Laptop", "Phone", "Tablet", "Monitor", "Keyboard", "Mouse", "Headset", "Webcam", "Printer", "Router"]
+    reps = ["Alice", "Bob", "Carol", "David", "Eva", "Frank", "Grace", "Henry", "Iris", "Jack"]
+    categories = {
+        "Laptop": "Electronics",
+        "Phone": "Electronics",
+        "Tablet": "Electronics",
+        "Monitor": "Peripherals",
+        "Keyboard": "Peripherals",
+        "Mouse": "Peripherals",
+        "Headset": "Peripherals",
+        "Webcam": "Peripherals",
+        "Printer": "Office",
+        "Router": "Networking",
+    }
+    unit_prices = {
+        "Laptop": 999,
+        "Phone": 699,
+        "Tablet": 499,
+        "Monitor": 349,
+        "Keyboard": 89,
+        "Mouse": 49,
+        "Headset": 149,
+        "Webcam": 99,
+        "Printer": 299,
+        "Router": 129,
+    }
+
+    years = np.random.choice([2023, 2024, 2025], n)
+    months = np.random.choice(MONTHS, n)
+    regions_selected = np.random.choice(regions, n)
+    products_selected = np.random.choice(products, n)
+    reps_selected = np.random.choice(reps, n)
+    units = np.random.randint(1, 50, n)
+    prices = np.array([unit_prices[product] * np.random.uniform(0.85, 1.15) for product in products_selected]).round(2)
+    sales = (units * prices).round(2)
+    discounts = np.random.choice([0, 0, 0, 0.05, 0.1, 0.15], n)
+    net_sales = (sales * (1 - discounts)).round(2)
+    costs = (net_sales * np.random.uniform(0.45, 0.65, n)).round(2)
+    profit = (net_sales - costs).round(2)
+    margin = ((profit / net_sales) * 100).round(2)
+    customer_types = np.random.choice(["Retail", "Corporate", "Government", "SMB"], n, p=[0.4, 0.35, 0.1, 0.15])
+    satisfaction = np.random.choice([1, 2, 3, 4, 5], n, p=[0.05, 0.1, 0.2, 0.35, 0.3])
+
+    return pd.DataFrame({
+        "Year": years,
+        "Month": months,
+        "Region": regions_selected,
+        "Sales Rep": reps_selected,
+        "Product": products_selected,
+        "Category": [categories[product] for product in products_selected],
+        "Customer Type": customer_types,
+        "Units Sold": units,
+        "Unit Price ($)": prices,
+        "Gross Sales ($)": sales,
+        "Discount (%)": (discounts * 100).astype(int),
+        "Net Sales ($)": net_sales,
+        "Cost ($)": costs,
+        "Profit ($)": profit,
+        "Profit Margin (%)": margin,
+        "Customer Satisfaction": satisfaction,
+    })
 
 
-def format_value(value):
+def format_currency(value):
+    return f"${value:,.0f}"
+
+
+def format_number(value):
     if isinstance(value, float):
         if value.is_integer():
             return f"{int(value):,}"
         return f"{value:,.2f}"
-    if isinstance(value, int):
-        return f"{value:,}"
-    return str(value)
+    return f"{value:,}"
 
 
-def escape_cell(value):
-    if pd.isna(value):
-        return ""
-    return html.escape(format_value(value))
+def build_line_chart(title, labels, values):
+    width = 640
+    height = 320
+    left = 60
+    right = 24
+    top = 24
+    bottom = 46
+    inner_width = width - left - right
+    inner_height = height - top - bottom
+    max_value = max(max(values), 1.0)
 
-
-def sample_dataframes():
-    return {
-        "Sample Sales": pd.DataFrame({
-            "Month": ["Jan", "Feb", "Mar", "Apr"],
-            "Sales": [100, 150, 120, 180],
-            "Region": ["North", "South", "North", "South"],
-        })
-    }
-
-
-def get_manual_dataframes():
-    # Add custom in-memory dataframes here when needed.
-    return {}
-
-
-def first_non_empty_row(rows):
-    for row in rows:
-        if any(value not in (None, "") for value in row):
-            return row
-    return None
-
-
-def looks_like_header(row):
-    filled = [value for value in row if value not in (None, "")]
-    if len(filled) < 2:
-        return False
-    return all(isinstance(value, str) for value in filled)
-
-
-def build_dataframe_from_rows(rows):
-    non_empty_rows = [list(row) for row in rows if any(value not in (None, "") for value in row)]
-    if not non_empty_rows:
-        return pd.DataFrame()
-
-    header_row = first_non_empty_row(non_empty_rows)
-    if header_row is None:
-        return pd.DataFrame()
-
-    max_columns = max(len(row) for row in non_empty_rows)
-    normalized_rows = [row + [None] * (max_columns - len(row)) for row in non_empty_rows]
-
-    if looks_like_header(header_row):
-        headers = []
-        for index, value in enumerate(normalized_rows[0], start=1):
-            label = str(value).strip() if value not in (None, "") else f"Column {index}"
-            headers.append(label)
-        data_rows = normalized_rows[1:]
-    else:
-        headers = [f"Column {index}" for index in range(1, max_columns + 1)]
-        data_rows = normalized_rows
-
-    df = pd.DataFrame(data_rows, columns=headers)
-    df = df.dropna(axis=0, how="all").dropna(axis=1, how="all")
-    return df.reset_index(drop=True)
-
-
-def load_workbook_dataframes():
-    if not INPUT_FILE.exists():
-        return {}
-
-    workbook = load_workbook(INPUT_FILE, data_only=True)
-    datasets = {}
-    for sheet_name in workbook.sheetnames:
-        if sheet_name.strip().lower() in IGNORED_SHEET_NAMES:
-            continue
-        sheet = workbook[sheet_name]
-        rows = list(sheet.iter_rows(values_only=True))
-        df = build_dataframe_from_rows(rows)
-        if not df.empty:
-            datasets[sheet_name] = df
-    return datasets
-
-
-def normalize_dataframe(df):
-    normalized = df.copy()
-    normalized.columns = [str(column).strip() or f"Column {index + 1}" for index, column in enumerate(normalized.columns)]
-    normalized = normalized.dropna(axis=0, how="all").dropna(axis=1, how="all").reset_index(drop=True)
-    for column in normalized.columns:
-        if normalized[column].dtype == object:
-            normalized[column] = normalized[column].map(lambda value: value.strip() if isinstance(value, str) else value)
-    return normalized
-
-
-def get_dataframes():
-    datasets = {}
-    datasets.update(load_workbook_dataframes())
-    datasets.update(get_manual_dataframes())
-
-    normalized = {}
-    for name, df in datasets.items():
-        clean_df = normalize_dataframe(df)
-        if not clean_df.empty:
-            normalized[name] = clean_df
-    return normalized or sample_dataframes()
-
-
-def numeric_columns(df):
-    numeric = []
-    for column in df.columns:
-        converted = pd.to_numeric(df[column], errors="coerce")
-        if converted.notna().sum() > 0:
-            numeric.append(column)
-    return numeric
-
-
-def categorical_columns(df, excluded=None):
-    excluded = set(excluded or [])
-    return [column for column in df.columns if column not in excluded]
-
-
-def choose_primary_metric(df):
-    candidates = []
-    for column in numeric_columns(df):
-        series = pd.to_numeric(df[column], errors="coerce").dropna()
-        if series.empty:
-            continue
-        score = (series.notna().sum(), float(series.abs().sum()), float(series.std(ddof=0) or 0.0))
-        candidates.append((score, column))
-    if not candidates:
-        return None
-    return max(candidates)[1]
-
-
-def choose_label_column(df, excluded=None):
-    excluded = set(excluded or [])
-    candidates = []
-    for column in categorical_columns(df, excluded):
-        unique_count = df[column].dropna().astype(str).nunique()
-        if unique_count < 2:
-            continue
-        preference = 1 if any(token in column.lower() for token in PREFERRED_LABEL_NAMES) else 0
-        candidates.append(((preference, -abs(unique_count - min(len(df), 6))), column))
-    if candidates:
-        return max(candidates)[1]
-    for column in df.columns:
-        if column not in excluded:
-            return column
-    return None
-
-
-def build_bar_series(df):
-    metric_column = choose_primary_metric(df)
-    if metric_column is None:
-        return None
-
-    label_column = choose_label_column(df, excluded={metric_column})
-    metric_series = pd.to_numeric(df[metric_column], errors="coerce")
-
-    if label_column is None:
-        labels = [f"Row {index + 1}" for index in range(len(df))]
-        chart_df = pd.DataFrame({"label": labels, "value": metric_series}).dropna()
-    else:
-        chart_df = pd.DataFrame({
-            "label": df[label_column].astype(str),
-            "value": metric_series,
-        }).dropna()
-        chart_df = chart_df.groupby("label", as_index=False)["value"].sum()
-
-    if chart_df.empty:
-        return None
-
-    chart_df = chart_df.sort_values("value", ascending=False).head(12)
-    return {
-        "title": f"{metric_column} by {label_column or 'Row'}",
-        "labels": chart_df["label"].tolist(),
-        "values": chart_df["value"].tolist(),
-        "metric_column": metric_column,
-        "label_column": label_column or "Row",
-    }
-
-
-def build_donut_series(df):
-    metric_column = choose_primary_metric(df)
-    label_column = choose_label_column(df, excluded={metric_column} if metric_column else set())
-    if label_column is None:
-        return None
-
-    label_series = df[label_column].astype(str)
-    if label_series.nunique() < 2:
-        return None
-
-    if metric_column is not None:
-        metric_series = pd.to_numeric(df[metric_column], errors="coerce")
-        chart_df = pd.DataFrame({"label": label_series, "value": metric_series}).dropna()
-        if chart_df.empty:
-            return None
-        chart_df = chart_df.groupby("label", as_index=False)["value"].sum()
-        title = f"{metric_column} share by {label_column}"
-    else:
-        chart_df = label_series.value_counts().reset_index()
-        chart_df.columns = ["label", "value"]
-        title = f"Record share by {label_column}"
-
-    chart_df = chart_df.sort_values("value", ascending=False)
-    if len(chart_df) > 6:
-        top_rows = chart_df.head(5).copy()
-        remainder = chart_df.iloc[5:]["value"].sum()
-        chart_df = pd.concat(
-            [top_rows, pd.DataFrame([{"label": "Other", "value": remainder}])],
-            ignore_index=True,
-        )
-
-    return {
-        "title": title,
-        "labels": chart_df["label"].tolist(),
-        "values": chart_df["value"].tolist(),
-        "label_column": label_column,
-        "metric_column": metric_column,
-    }
-
-
-def build_dataset_suggestions(name, df, bar_series, donut_series):
-    suggestions = []
-    if bar_series is not None:
-        suggestions.append(
-            f"Bar chart: compare {bar_series['metric_column']} across {bar_series['label_column']} for {name}."
-        )
-    if donut_series is not None:
-        suggestions.append(
-            f"Distribution chart: show how {donut_series['metric_column'] or 'records'} split by {donut_series['label_column']} in {name}."
-        )
-    suggestions.append(f"Detail table: keep the first rows of {name} visible for quick inspection.")
-    return suggestions[:3]
-
-
-def build_table(headers, rows):
-    header_html = "".join(f"<th>{html.escape(str(header))}</th>" for header in headers)
-    body_rows = []
-    for row in rows:
-        cells = "".join(f"<td>{escape_cell(cell)}</td>" for cell in row)
-        body_rows.append(f"<tr>{cells}</tr>")
-    return (
-        "<table><thead><tr>"
-        + header_html
-        + "</tr></thead><tbody>"
-        + "".join(body_rows)
-        + "</tbody></table>"
-    )
-
-
-def build_bar_chart(chart_id, title, labels, values):
-    chart_width = 560
-    chart_height = 280
-    left = 56
-    right = 18
-    top = 22
-    bottom = 42
-    inner_width = chart_width - left - right
-    inner_height = chart_height - top - bottom
-    max_value = max(max(float(value) for value in values), 1.0)
-    slot_width = inner_width / max(len(values), 1)
-    bar_width = min(52, slot_width * 0.58)
-
-    grid_lines = []
-    bars = []
-    value_labels = []
-    axis_labels = []
-
+    points = []
+    label_nodes = []
+    grid_nodes = []
+    value_nodes = []
     for step in range(5):
-        grid_value = max_value * step / 4
-        y = top + inner_height - (grid_value / max_value) * inner_height
-        grid_lines.append(
-            f'<line x1="{left}" y1="{y:.1f}" x2="{chart_width - right}" y2="{y:.1f}" />'
-            f'<text x="{left - 10}" y="{y + 4:.1f}">{html.escape(format_value(grid_value))}</text>'
+        tick_value = max_value * step / 4
+        y = top + inner_height - (tick_value / max_value) * inner_height
+        grid_nodes.append(
+            f'<line x1="{left}" y1="{y:.1f}" x2="{width - right}" y2="{y:.1f}" />'
+            f'<text x="{left - 10}" y="{y + 4:.1f}">{html.escape(format_currency(tick_value))}</text>'
         )
 
-    for index, (label, value) in enumerate(zip(labels, values), start=0):
-        x = left + slot_width * index + (slot_width - bar_width) / 2
-        height = (float(value) / max_value) * inner_height
-        y = top + inner_height - height
-        label_x = x + bar_width / 2
-        bars.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" height="{height:.1f}" rx="14" />')
-        value_labels.append(
-            f'<text x="{label_x:.1f}" y="{max(y - 10, 16):.1f}" class="value-label">{html.escape(format_value(float(value)))}</text>'
-        )
-        axis_labels.append(
-            f'<text x="{label_x:.1f}" y="{chart_height - 14}" class="axis-label">{html.escape(str(label))}</text>'
+    for index, (label, value) in enumerate(zip(labels, values)):
+        x = left + (inner_width / max(len(values) - 1, 1)) * index
+        y = top + inner_height - (value / max_value) * inner_height
+        points.append((x, y))
+        label_nodes.append(f'<text x="{x:.1f}" y="{height - 16}" class="axis-label">{html.escape(str(label))}</text>')
+        value_nodes.append(f'<text x="{x:.1f}" y="{max(y - 12, 14):.1f}" class="value-label">{html.escape(format_currency(value))}</text>')
+
+    path = " ".join(f"{'M' if index == 0 else 'L'} {x:.1f} {y:.1f}" for index, (x, y) in enumerate(points))
+    area = path + f" L {points[-1][0]:.1f} {top + inner_height:.1f} L {points[0][0]:.1f} {top + inner_height:.1f} Z"
+    circles = "".join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" />' for x, y in points)
+
+    return f"""
+    <article class="panel">
+      <h3>{html.escape(title)}</h3>
+      <svg viewBox="0 0 {width} {height}" class="chart" role="img" aria-label="{html.escape(title)}">
+        <defs>
+          <linearGradient id="trendArea" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="rgba(15, 118, 110, 0.38)" />
+            <stop offset="100%" stop-color="rgba(15, 118, 110, 0.02)" />
+          </linearGradient>
+        </defs>
+        <g class="grid">{''.join(grid_nodes)}</g>
+        <path d="{area}" fill="rgba(15, 118, 110, 0.14)"></path>
+        <path d="{path}" fill="none" stroke="#0f766e" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
+        <g class="line-points">{circles}</g>
+        <g class="value-labels">{''.join(value_nodes)}</g>
+        <g class="labels">{''.join(label_nodes)}</g>
+      </svg>
+    </article>
+    """
+
+
+def build_horizontal_bar_chart(title, labels, values, formatter):
+    width = 520
+    row_height = 52
+    height = 56 + len(values) * row_height
+    left = 148
+    right = 28
+    bar_height = 24
+    max_value = max(max(values), 1.0)
+
+    bars = []
+    for index, (label, value) in enumerate(zip(labels, values)):
+        y = 26 + index * row_height
+        bar_width = (value / max_value) * (width - left - right)
+        color = PALETTE[index % len(PALETTE)]
+        bars.append(
+            f'<text x="12" y="{y + 16:.1f}" class="bar-label">{html.escape(str(label))}</text>'
+            f'<rect x="{left}" y="{y:.1f}" width="{bar_width:.1f}" height="{bar_height}" rx="12" fill="{color}" />'
+            f'<text x="{left + bar_width + 10:.1f}" y="{y + 16:.1f}" class="bar-value">{html.escape(formatter(value))}</text>'
         )
 
     return f"""
     <article class="panel">
       <h3>{html.escape(title)}</h3>
-      <svg viewBox="0 0 {chart_width} {chart_height}" class="sales-chart" role="img" aria-label="{html.escape(title)}">
-        <defs>
-          <linearGradient id="{chart_id}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#34d399" />
-            <stop offset="100%" stop-color="#0f766e" />
-          </linearGradient>
-        </defs>
-        <g class="grid">{''.join(grid_lines)}</g>
-        <g class="bars" style="fill:url(#{chart_id})">{''.join(bars)}</g>
-        <g class="value-labels">{''.join(value_labels)}</g>
-        <g class="labels">{''.join(axis_labels)}</g>
+      <svg viewBox="0 0 {width} {height}" class="chart" role="img" aria-label="{html.escape(title)}">
+        {''.join(bars)}
       </svg>
     </article>
     """
@@ -343,10 +190,10 @@ def build_donut_chart(title, labels, values):
     cursor = 0.0
     segments = []
     legend_items = []
-    for index, (label, value) in enumerate(zip(labels, values), start=0):
+    for index, (label, value) in enumerate(zip(labels, values)):
         share = float(value) / total
         next_cursor = cursor + share * 100
-        color = PALETTE[(index - 1) % len(PALETTE)]
+        color = PALETTE[index % len(PALETTE)]
         segments.append(f"{color} {cursor:.2f}% {next_cursor:.2f}%")
         legend_items.append(
             "<div class=\"legend-item\">"
@@ -364,7 +211,7 @@ def build_donut_chart(title, labels, values):
         <div class="donut-chart" style="background: conic-gradient({', '.join(segments)});">
           <div class="donut-hole">
             <span>Total</span>
-            <strong>{html.escape(format_value(total))}</strong>
+            <strong>{html.escape(format_currency(total))}</strong>
           </div>
         </div>
         <div class="legend">{''.join(legend_items)}</div>
@@ -373,131 +220,151 @@ def build_donut_chart(title, labels, values):
     """
 
 
-def build_dataset_context(name, df):
-    bar_series = build_bar_series(df)
-    donut_series = build_donut_series(df)
-    preview_df = df.head(8).fillna("")
-    suggestions = build_dataset_suggestions(name, df, bar_series, donut_series)
+def build_table(headers, rows):
+    header_html = "".join(f"<th>{html.escape(str(header))}</th>" for header in headers)
+    body_rows = []
+    for row in rows:
+        cells = "".join(f"<td>{html.escape(str(cell))}</td>" for cell in row)
+        body_rows.append(f"<tr>{cells}</tr>")
+    return (
+        "<table><thead><tr>"
+        + header_html
+        + "</tr></thead><tbody>"
+        + "".join(body_rows)
+        + "</tbody></table>"
+    )
 
-    stats = [
-        {"label": "Rows", "value": len(df), "note": f"{len(df.columns)} columns"},
-        {"label": "Numeric Columns", "value": len(numeric_columns(df)), "note": "Fields usable for aggregation"},
-        {"label": "Categories", "value": len(categorical_columns(df)), "note": "Non-metric grouping fields"},
-    ]
 
-    primary_metric = choose_primary_metric(df)
-    if primary_metric is not None:
-        numeric_series = pd.to_numeric(df[primary_metric], errors="coerce").dropna()
-        stats.append({
-            "label": f"Primary Metric",
-            "value": format_value(float(numeric_series.sum())),
-            "note": f"Total {primary_metric}",
+def render_dashboard(df):
+    df = df.copy()
+    df["Month Order"] = df["Month"].map(MONTH_ORDER)
+    df["Period"] = df["Year"].astype(str) + "-" + df["Month"]
+
+    monthly_sales = (
+        df.groupby(["Year", "Month", "Month Order"], as_index=False)["Net Sales ($)"]
+        .sum()
+        .sort_values(["Year", "Month Order"])
+    )
+    trend_labels = (monthly_sales["Year"].astype(str) + " " + monthly_sales["Month"]).tolist()
+    trend_values = monthly_sales["Net Sales ($)"].tolist()
+
+    category_share = (
+        df.groupby("Category", as_index=False)["Net Sales ($)"]
+        .sum()
+        .sort_values("Net Sales ($)", ascending=False)
+    )
+    region_profit = (
+        df.groupby("Region", as_index=False)["Profit ($)"]
+        .sum()
+        .sort_values("Profit ($)", ascending=False)
+    )
+    customer_satisfaction = (
+        df.groupby("Customer Type", as_index=False)["Customer Satisfaction"]
+        .mean()
+        .sort_values("Customer Satisfaction", ascending=False)
+    )
+    top_reps = (
+        df.groupby("Sales Rep", as_index=False)
+        .agg({
+            "Net Sales ($)": "sum",
+            "Profit ($)": "sum",
+            "Units Sold": "sum",
         })
+        .sort_values("Net Sales ($)", ascending=False)
+        .head(6)
+    )
+    yearly_summary = (
+        df.groupby("Year", as_index=False)
+        .agg({
+            "Net Sales ($)": "sum",
+            "Profit ($)": "sum",
+            "Units Sold": "sum",
+            "Customer Satisfaction": "mean",
+        })
+        .sort_values("Year")
+    )
+    top_products = (
+        df.groupby(["Product", "Category"], as_index=False)
+        .agg({
+            "Net Sales ($)": "sum",
+            "Profit ($)": "sum",
+            "Units Sold": "sum",
+        })
+        .sort_values("Net Sales ($)", ascending=False)
+        .head(8)
+    )
 
-    return {
-        "name": name,
-        "slug": slugify(name),
-        "dataframe": df,
-        "stats": stats,
-        "bar_series": bar_series,
-        "donut_series": donut_series,
-        "suggestions": suggestions,
-        "preview_table": build_table(preview_df.columns.tolist(), preview_df.values.tolist()),
-    }
+    total_net_sales = float(df["Net Sales ($)"].sum())
+    total_profit = float(df["Profit ($)"].sum())
+    total_units = int(df["Units Sold"].sum())
+    avg_margin = float(df["Profit Margin (%)"].mean())
+    avg_satisfaction = float(df["Customer Satisfaction"].mean())
+    best_region = region_profit.iloc[0]
 
-
-def render_html_dashboard(dataset_contexts):
-    total_rows = sum(len(context["dataframe"]) for context in dataset_contexts)
-    total_columns = sum(len(context["dataframe"].columns) for context in dataset_contexts)
     hero_cards = [
-        ("Datasets", len(dataset_contexts), "Detected and rendered automatically"),
-        ("Rows", total_rows, "Across all included dataframes"),
-        ("Columns", total_columns, "Combined schema width"),
+        ("Net Sales", format_currency(total_net_sales), "After discounts across all orders"),
+        ("Profit", format_currency(total_profit), f"{(total_profit / total_net_sales) * 100:.1f}% of net sales"),
+        ("Units Sold", format_number(total_units), "Total units moved"),
+        ("Avg Margin", f"{avg_margin:.1f}%", "Average profit margin"),
+        ("Satisfaction", f"{avg_satisfaction:.2f}/5", "Average customer rating"),
+        ("Top Region", str(best_region["Region"]), f"{format_currency(float(best_region['Profit ($)']))} profit"),
     ]
-
     hero_cards_html = "".join(
         "<div class=\"card\">"
         f"<div class=\"eyebrow\">{html.escape(label)}</div>"
-        f"<div class=\"metric\">{html.escape(format_value(value))}</div>"
+        f"<div class=\"metric\">{html.escape(value)}</div>"
         f"<div class=\"metric-note\">{html.escape(note)}</div>"
         "</div>"
         for label, value, note in hero_cards
     )
 
-    dataset_sections = []
-    for context in dataset_contexts:
-        stat_cards = "".join(
-            "<div class=\"card compact\">"
-            f"<div class=\"eyebrow\">{html.escape(stat['label'])}</div>"
-            f"<div class=\"metric small\">{html.escape(format_value(stat['value']))}</div>"
-            f"<div class=\"metric-note\">{html.escape(stat['note'])}</div>"
-            "</div>"
-            for stat in context["stats"]
-        )
-
-        chart_panels = []
-        if context["bar_series"] is not None:
-            chart_panels.append(
-                build_bar_chart(
-                    f"bar-gradient-{context['slug']}",
-                    context["bar_series"]["title"],
-                    context["bar_series"]["labels"],
-                    context["bar_series"]["values"],
-                )
-            )
-        if context["donut_series"] is not None:
-            chart_panels.append(
-                build_donut_chart(
-                    context["donut_series"]["title"],
-                    context["donut_series"]["labels"],
-                    context["donut_series"]["values"],
-                )
-            )
-        if not chart_panels:
-            chart_panels.append(
-                "<article class=\"panel\"><h3>No chartable structure detected</h3>"
-                "<p class=\"panel-copy\">This dataset does not have enough numeric or grouping information for a chart, so only the preview table is shown.</p></article>"
-            )
-
-        suggestion_items = "".join(f"<li>{html.escape(item)}</li>" for item in context["suggestions"])
-        dataset_sections.append(
-            f"""
-            <section class="dataset-section">
-              <div class="dataset-header">
-                <div>
-                  <div class="eyebrow">Dataset</div>
-                  <h2>{html.escape(context["name"])}</h2>
-                </div>
-              </div>
-              <div class="kpis compact-grid">{stat_cards}</div>
-              <div class="grid">{''.join(chart_panels)}</div>
-              <div class="dataset-lower">
-                <article class="panel">
-                  <h3>Suggested Views</h3>
-                  <ol>{suggestion_items}</ol>
-                </article>
-                <article class="panel">
-                  <h3>Data Preview</h3>
-                  {context["preview_table"]}
-                </article>
-              </div>
-            </section>
-            """
-        )
+    top_rep_rows = [
+        [
+            row["Sales Rep"],
+            format_currency(float(row["Net Sales ($)"])),
+            format_currency(float(row["Profit ($)"])),
+            format_number(int(row["Units Sold"])),
+        ]
+        for _, row in top_reps.iterrows()
+    ]
+    year_rows = [
+        [
+            int(row["Year"]),
+            format_currency(float(row["Net Sales ($)"])),
+            format_currency(float(row["Profit ($)"])),
+            format_number(int(row["Units Sold"])),
+            f"{float(row['Customer Satisfaction']):.2f}/5",
+        ]
+        for _, row in yearly_summary.iterrows()
+    ]
+    product_rows = [
+        [
+            row["Product"],
+            row["Category"],
+            format_currency(float(row["Net Sales ($)"])),
+            format_currency(float(row["Profit ($)"])),
+            format_number(int(row["Units Sold"])),
+        ]
+        for _, row in top_products.iterrows()
+    ]
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AI Multi-Dataframe Dashboard</title>
+  <title>Executive Sales Command Center</title>
   <style>
     :root {{
       --ink: #182126;
       --muted: #5d6a72;
-      --panel: rgba(255, 252, 247, 0.86);
+      --gold: #d6a54b;
+      --teal: #0f766e;
+      --amber: #f59e0b;
+      --cream: #f8f2e8;
+      --panel: rgba(255, 251, 245, 0.84);
       --line: rgba(24, 33, 38, 0.12);
-      --shadow: 0 24px 60px rgba(24, 33, 38, 0.12);
+      --shadow: 0 26px 70px rgba(24, 33, 38, 0.16);
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -505,66 +372,65 @@ def render_html_dashboard(dataset_contexts):
       font-family: "Trebuchet MS", "Segoe UI Variable Text", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(circle at top left, rgba(15, 118, 110, 0.20), transparent 32%),
-        radial-gradient(circle at top right, rgba(245, 158, 11, 0.22), transparent 26%),
-        linear-gradient(160deg, #f9f3ea 0%, #f1efe8 55%, #e8f1ef 100%);
+        radial-gradient(circle at top left, rgba(214, 165, 75, 0.22), transparent 28%),
+        radial-gradient(circle at top right, rgba(15, 118, 110, 0.22), transparent 30%),
+        linear-gradient(145deg, #f8f2e8 0%, #f3f4ef 56%, #e8f0ee 100%);
       min-height: 100vh;
     }}
     .shell {{
-      max-width: 1220px;
+      max-width: 1280px;
       margin: 0 auto;
-      padding: 36px 20px 56px;
+      padding: 34px 20px 60px;
     }}
     .hero, .panel, .card {{
       background: var(--panel);
-      border: 1px solid rgba(255,255,255,0.8);
-      border-radius: 24px;
+      border: 1px solid rgba(255,255,255,0.82);
+      border-radius: 28px;
       box-shadow: var(--shadow);
       backdrop-filter: blur(14px);
     }}
     .hero {{
-      padding: 32px;
-      overflow: hidden;
       position: relative;
+      overflow: hidden;
+      padding: 34px;
     }}
     .hero::after {{
       content: "";
       position: absolute;
-      inset: auto -90px -110px auto;
-      width: 280px;
-      height: 280px;
+      width: 320px;
+      height: 320px;
+      right: -70px;
+      bottom: -120px;
       border-radius: 999px;
-      background: rgba(15, 118, 110, 0.10);
+      background: radial-gradient(circle, rgba(214, 165, 75, 0.24), rgba(214, 165, 75, 0.02));
     }}
     h1, h2, h3 {{
-      font-family: "Palatino Linotype", "Book Antiqua", Georgia, serif;
       margin: 0;
+      font-family: "Palatino Linotype", "Book Antiqua", Georgia, serif;
     }}
     h1 {{
-      font-size: clamp(2.1rem, 4vw, 3.8rem);
-      line-height: 0.95;
-      max-width: 10ch;
+      font-size: clamp(2.4rem, 4vw, 4.2rem);
+      line-height: 0.92;
+      max-width: 11ch;
     }}
     h2 {{
-      font-size: 2rem;
+      font-size: 1.9rem;
     }}
     h3 {{
-      font-size: 1.2rem;
+      font-size: 1.24rem;
       margin-bottom: 12px;
-    }}
-    .hero p, .panel-copy {{
-      color: var(--muted);
-      line-height: 1.6;
-    }}
-    .hero p {{
-      max-width: 62ch;
-      margin: 16px 0 0;
     }}
     .eyebrow {{
       color: var(--muted);
       font-size: 0.78rem;
-      letter-spacing: 0.12em;
+      letter-spacing: 0.14em;
       text-transform: uppercase;
+    }}
+    .hero-copy, .panel-copy {{
+      max-width: 64ch;
+      margin: 16px 0 0;
+      color: var(--muted);
+      line-height: 1.65;
     }}
     .kpis {{
       display: grid;
@@ -572,77 +438,56 @@ def render_html_dashboard(dataset_contexts):
       gap: 16px;
       margin-top: 24px;
     }}
-    .compact-grid {{
-      margin-top: 18px;
-    }}
     .card {{
       padding: 18px 18px 16px;
-    }}
-    .card.compact {{
-      padding: 16px;
     }}
     .metric {{
       margin-top: 8px;
       font-size: 1.9rem;
       font-weight: 700;
     }}
-    .metric.small {{
-      font-size: 1.45rem;
-    }}
     .metric-note {{
       margin-top: 6px;
       color: var(--muted);
       font-size: 0.92rem;
     }}
-    .dataset-section {{
-      margin-top: 24px;
-    }}
-    .dataset-header {{
-      display: flex;
-      align-items: end;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 10px;
-    }}
     .grid {{
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: 1.25fr 0.95fr;
       gap: 18px;
-      margin-top: 18px;
+      margin-top: 22px;
     }}
-    .dataset-lower {{
-      display: grid;
-      grid-template-columns: 0.85fr 1.15fr;
-      gap: 18px;
-      margin-top: 18px;
+    .grid.three {{
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }}
     .panel {{
       padding: 22px;
     }}
-    .sales-chart {{
+    .chart {{
       width: 100%;
       height: auto;
       display: block;
     }}
-    .sales-chart .grid line {{
+    .chart .grid line {{
       stroke: rgba(24, 33, 38, 0.10);
       stroke-width: 1;
     }}
-    .sales-chart .grid text {{
+    .chart .grid text, .axis-label, .bar-label {{
       fill: var(--muted);
       font-size: 11px;
-      text-anchor: end;
     }}
-    .sales-chart .axis-label {{
-      fill: var(--muted);
-      font-size: 12px;
+    .axis-label, .value-label {{
       text-anchor: middle;
     }}
-    .sales-chart .value-label {{
+    .value-label, .bar-value {{
       fill: var(--ink);
       font-size: 11px;
       font-weight: 700;
-      text-anchor: middle;
+    }}
+    .line-points circle {{
+      fill: #ffffff;
+      stroke: var(--teal);
+      stroke-width: 3;
     }}
     .donut-wrap {{
       display: grid;
@@ -651,7 +496,7 @@ def render_html_dashboard(dataset_contexts):
       justify-items: center;
     }}
     .donut-chart {{
-      width: min(280px, 70vw);
+      width: min(300px, 72vw);
       aspect-ratio: 1;
       border-radius: 50%;
       display: grid;
@@ -662,7 +507,7 @@ def render_html_dashboard(dataset_contexts):
       width: 56%;
       aspect-ratio: 1;
       border-radius: 50%;
-      background: rgba(255, 251, 246, 0.92);
+      background: rgba(255, 251, 245, 0.96);
       display: grid;
       place-items: center;
       text-align: center;
@@ -670,12 +515,12 @@ def render_html_dashboard(dataset_contexts):
     }}
     .donut-hole span {{
       color: var(--muted);
-      font-size: 0.85rem;
-      text-transform: uppercase;
+      font-size: 0.82rem;
       letter-spacing: 0.08em;
+      text-transform: uppercase;
     }}
     .donut-hole strong {{
-      font-size: 1.6rem;
+      font-size: 1.65rem;
       line-height: 1;
     }}
     .legend {{
@@ -690,7 +535,7 @@ def render_html_dashboard(dataset_contexts):
       align-items: center;
       padding: 10px 12px;
       border-radius: 14px;
-      background: rgba(255,255,255,0.58);
+      background: rgba(255,255,255,0.56);
       border: 1px solid rgba(24, 33, 38, 0.07);
     }}
     .legend-swatch {{
@@ -711,26 +556,23 @@ def render_html_dashboard(dataset_contexts):
       vertical-align: top;
     }}
     th {{
-      background: rgba(15, 118, 110, 0.09);
+      background: rgba(15, 118, 110, 0.08);
+      color: var(--muted);
       font-size: 0.82rem;
       text-transform: uppercase;
       letter-spacing: 0.08em;
+    }}
+    .footer-note {{
+      margin-top: 14px;
       color: var(--muted);
+      font-size: 0.92rem;
     }}
-    ol {{
-      margin: 10px 0 0;
-      padding-left: 22px;
-    }}
-    li {{
-      margin-bottom: 10px;
-      line-height: 1.45;
-    }}
-    @media (max-width: 960px) {{
-      .grid, .dataset-lower {{
+    @media (max-width: 980px) {{
+      .grid, .grid.three {{
         grid-template-columns: 1fr;
       }}
       .hero {{
-        padding: 24px;
+        padding: 26px;
       }}
     }}
   </style>
@@ -738,53 +580,91 @@ def render_html_dashboard(dataset_contexts):
 <body>
   <div class="shell">
     <section class="hero">
-      <div class="eyebrow">Shareable HTML Dashboard</div>
-      <h1>Generalized multi-dataframe dashboard</h1>
-      <p>This page is generated from every detected dataframe. Update the dataframe definitions or workbook sheets, rerun the script, and the dashboard layout will rebuild around the new structure automatically.</p>
+      <div class="eyebrow">Executive Sales Command Center</div>
+      <h1>High-value sales performance, margin, and momentum</h1>
+      <p class="hero-copy">This dashboard is generated directly from the synthetic enterprise sales dataframe in your code. It focuses on revenue quality, profitability, commercial execution, and customer sentiment across years, regions, products, and sales reps.</p>
       <div class="kpis">{hero_cards_html}</div>
     </section>
-    {''.join(dataset_sections)}
+
+    <section class="grid">
+      {build_line_chart("Net Sales Trend by Month", trend_labels, trend_values)}
+      {build_donut_chart("Category Revenue Mix", category_share["Category"].tolist(), category_share["Net Sales ($)"].tolist())}
+    </section>
+
+    <section class="grid three">
+      {build_horizontal_bar_chart("Regional Profit Contribution", region_profit["Region"].tolist(), region_profit["Profit ($)"].tolist(), format_currency)}
+      {build_horizontal_bar_chart("Customer Satisfaction by Segment", customer_satisfaction["Customer Type"].tolist(), customer_satisfaction["Customer Satisfaction"].tolist(), lambda value: f"{value:.2f}/5")}
+      {build_horizontal_bar_chart("Top Sales Reps by Net Sales", top_reps["Sales Rep"].tolist(), top_reps["Net Sales ($)"].tolist(), format_currency)}
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <h3>Top Sales Reps</h3>
+        {build_table(["Sales Rep", "Net Sales", "Profit", "Units Sold"], top_rep_rows)}
+      </article>
+      <article class="panel">
+        <h3>Yearly Summary</h3>
+        {build_table(["Year", "Net Sales", "Profit", "Units Sold", "Avg Satisfaction"], year_rows)}
+      </article>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <h3>Best-Selling Products</h3>
+        {build_table(["Product", "Category", "Net Sales", "Profit", "Units Sold"], product_rows)}
+      </article>
+      <article class="panel">
+        <h3>Data Footprint</h3>
+        <p class="panel-copy">The generated dataset contains {len(df):,} rows across {len(df.columns)} fields. Raw exports are written to <code>dashboard_exports</code>, and this same page is mirrored to <code>docs/index.html</code> for GitHub Pages publishing.</p>
+        {build_table(
+            ["Field", "Meaning"],
+            [
+                ["Net Sales ($)", "Revenue after the applied discount"],
+                ["Profit ($)", "Net sales minus estimated cost"],
+                ["Profit Margin (%)", "Profit as a percentage of net sales"],
+                ["Customer Satisfaction", "Synthetic 1-5 customer rating"],
+                ["Customer Type", "Retail, Corporate, Government, or SMB account"],
+            ],
+        )}
+        <div class="footer-note">Rerun the script after changing the dataframe definition to rebuild the entire dashboard.</div>
+      </article>
+    </section>
   </div>
 </body>
 </html>
 """
 
 
-def export_dataset_files(dataset_contexts):
-    OUTPUT_DATA_DIR.mkdir(exist_ok=True)
-    dataset_index_rows = []
-    suggestion_rows = []
-    for context in dataset_contexts:
-        csv_path = OUTPUT_DATA_DIR / f"{context['slug']}.csv"
-        context["dataframe"].to_csv(csv_path, index=False)
-        dataset_index_rows.append({
-            "Dataset": context["name"],
-            "Rows": len(context["dataframe"]),
-            "Columns": len(context["dataframe"].columns),
-            "CSV File": csv_path.name,
-        })
-        for suggestion in context["suggestions"]:
-            suggestion_rows.append({"Dataset": context["name"], "Suggestion": suggestion})
+df = build_sales_dataframe()
+OUTPUT_DATA_DIR.mkdir(exist_ok=True)
+df.to_csv(OUTPUT_DATA_CSV, index=False)
 
-    pd.DataFrame(dataset_index_rows).to_csv(OUTPUT_DATA_INDEX, index=False)
-    pd.DataFrame(suggestion_rows).to_csv(OUTPUT_SUGGESTIONS_CSV, index=False)
+top_reps_export = (
+    df.groupby("Sales Rep", as_index=False)
+    .agg({"Net Sales ($)": "sum", "Profit ($)": "sum", "Units Sold": "sum"})
+    .sort_values("Net Sales ($)", ascending=False)
+)
+top_reps_export.to_csv(OUTPUT_REP_CSV, index=False)
 
+year_summary_export = (
+    df.groupby("Year", as_index=False)
+    .agg({
+        "Net Sales ($)": "sum",
+        "Profit ($)": "sum",
+        "Units Sold": "sum",
+        "Customer Satisfaction": "mean",
+    })
+    .sort_values("Year")
+)
+year_summary_export.to_csv(OUTPUT_YEAR_CSV, index=False)
 
-datasets = get_dataframes()
-dataset_contexts = [build_dataset_context(name, df) for name, df in datasets.items()]
-html_output = render_html_dashboard(dataset_contexts)
-
-export_dataset_files(dataset_contexts)
+html_output = render_dashboard(df)
 OUTPUT_HTML.write_text(html_output, encoding="utf-8")
 OUTPUT_SITE_DIR.mkdir(exist_ok=True)
 OUTPUT_SITE_HTML.write_text(html_output, encoding="utf-8")
 OUTPUT_NOJEKYLL.write_text("", encoding="utf-8")
 
-print("Datasets included:")
-for context in dataset_contexts:
-    print(f"- {context['name']}: {len(context['dataframe'])} rows, {len(context['dataframe'].columns)} columns")
-
+print(f"Dataset generated: {len(df):,} rows x {len(df.columns)} columns")
 print(f"HTML dashboard saved: {OUTPUT_HTML.resolve()}")
 print(f"Shareable site entry saved: {OUTPUT_SITE_HTML.resolve()}")
-print(f"Dataset index saved: {OUTPUT_DATA_INDEX.resolve()}")
-print(f"Suggestions CSV saved: {OUTPUT_SUGGESTIONS_CSV.resolve()}")
+print(f"Dataset CSV saved: {OUTPUT_DATA_CSV.resolve()}")
