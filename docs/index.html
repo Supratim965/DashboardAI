@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Sales Dashboard</title>
+  <style>
+    :root {
+      --ink: #182126;
+      --muted: #5d6a72;
+      --paper: #f6f0e8;
+      --panel: rgba(255, 252, 247, 0.82);
+      --line: rgba(24, 33, 38, 0.12);
+      --teal: #0f766e;
+      --amber: #f59e0b;
+      --coral: #dc2626;
+      --sky: #2563eb;
+      --shadow: 0 24px 60px rgba(24, 33, 38, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Trebuchet MS", "Segoe UI Variable Text", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.20), transparent 32%),
+        radial-gradient(circle at top right, rgba(245, 158, 11, 0.22), transparent 26%),
+        linear-gradient(160deg, #f9f3ea 0%, #f1efe8 55%, #e8f1ef 100%);
+      min-height: 100vh;
+    }
+    .shell {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 36px 20px 48px;
+    }
+    .hero {
+      padding: 32px;
+      border-radius: 28px;
+      background: linear-gradient(135deg, rgba(255,255,255,0.9), rgba(245, 248, 247, 0.72));
+      border: 1px solid rgba(255,255,255,0.75);
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -90px -110px auto;
+      width: 280px;
+      height: 280px;
+      border-radius: 999px;
+      background: rgba(15, 118, 110, 0.10);
+      filter: blur(4px);
+    }
+    h1, h2 {
+      font-family: "Palatino Linotype", "Book Antiqua", Georgia, serif;
+      margin: 0;
+    }
+    h1 {
+      font-size: clamp(2rem, 4vw, 3.6rem);
+      line-height: 0.95;
+      max-width: 9ch;
+    }
+    .hero p {
+      max-width: 58ch;
+      color: var(--muted);
+      font-size: 1rem;
+      line-height: 1.6;
+      margin: 16px 0 0;
+    }
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-top: 24px;
+    }
+    .card, .panel {
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      border: 1px solid rgba(255,255,255,0.8);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+    }
+    .card {
+      padding: 18px 18px 16px;
+    }
+    .eyebrow {
+      color: var(--muted);
+      font-size: 0.78rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .metric {
+      margin-top: 8px;
+      font-size: 1.9rem;
+      font-weight: 700;
+    }
+    .metric-note {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 18px;
+      margin-top: 22px;
+    }
+    .panel {
+      padding: 22px;
+    }
+    .panel h2 {
+      font-size: 1.45rem;
+      margin-bottom: 6px;
+    }
+    .panel-copy {
+      color: var(--muted);
+      margin: 0 0 14px;
+    }
+    .sales-chart {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .sales-chart .grid line {
+      stroke: rgba(24, 33, 38, 0.10);
+      stroke-width: 1;
+    }
+    .sales-chart .grid text {
+      fill: var(--muted);
+      font-size: 11px;
+      text-anchor: end;
+    }
+    .sales-chart .bars rect {
+      fill: url(#barGradient);
+    }
+    .sales-chart .axis-label {
+      fill: var(--muted);
+      font-size: 12px;
+      text-anchor: middle;
+    }
+    .sales-chart .value-label {
+      fill: var(--ink);
+      font-size: 11px;
+      font-weight: 700;
+      text-anchor: middle;
+    }
+    .sales-chart defs linearGradient stop:first-child {
+      stop-color: #0f766e;
+    }
+    .sales-chart defs linearGradient stop:last-child {
+      stop-color: #34d399;
+    }
+    .donut-wrap {
+      display: grid;
+      gap: 18px;
+      align-items: center;
+      justify-items: center;
+      min-height: 100%;
+    }
+    .donut-chart {
+      width: min(280px, 70vw);
+      aspect-ratio: 1;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35);
+    }
+    .donut-hole {
+      width: 56%;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: rgba(255, 251, 246, 0.92);
+      display: grid;
+      place-items: center;
+      text-align: center;
+      box-shadow: inset 0 0 0 1px rgba(24, 33, 38, 0.08);
+    }
+    .donut-hole span {
+      color: var(--muted);
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .donut-hole strong {
+      font-size: 1.6rem;
+      line-height: 1;
+    }
+    .legend {
+      width: 100%;
+      display: grid;
+      gap: 10px;
+    }
+    .legend-item {
+      display: grid;
+      grid-template-columns: 14px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.58);
+      border: 1px solid rgba(24, 33, 38, 0.07);
+    }
+    .legend-swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+    }
+    .suggestions {
+      display: grid;
+      grid-template-columns: 0.9fr 1.1fr;
+      gap: 18px;
+      margin-top: 18px;
+    }
+    ol {
+      margin: 10px 0 0;
+      padding-left: 22px;
+    }
+    li {
+      margin-bottom: 10px;
+      line-height: 1.45;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 0.95rem;
+      overflow: hidden;
+      border-radius: 16px;
+    }
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+    }
+    th {
+      background: rgba(15, 118, 110, 0.09);
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+    .footer-note {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+    @media (max-width: 900px) {
+      .grid, .suggestions {
+        grid-template-columns: 1fr;
+      }
+      .hero {
+        padding: 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div class="eyebrow">Offline HTML Dashboard</div>
+      <h1>Sales performance at a glance</h1>
+      <p>This dashboard is generated directly from your local project data and CSV outputs. It is fully self-contained, so you can open it in any browser without Excel or internet access.</p>
+      <div class="kpis">
+        <div class="card">
+          <div class="eyebrow">Total Sales</div>
+          <div class="metric">550</div>
+          <div class="metric-note">Across 4 reporting rows</div>
+        </div>
+        <div class="card">
+          <div class="eyebrow">Average Sale</div>
+          <div class="metric">138</div>
+          <div class="metric-note">Mean sales per month</div>
+        </div>
+        <div class="card">
+          <div class="eyebrow">Best Month</div>
+          <div class="metric">Apr</div>
+          <div class="metric-note">180 sales</div>
+        </div>
+        <div class="card">
+          <div class="eyebrow">Top Region</div>
+          <div class="metric">South</div>
+          <div class="metric-note">330 sales</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <h2>Sales by Month</h2>
+        <p class="panel-copy">A direct month-to-month view of the source sales data.</p>
+        
+    <svg viewBox="0 0 560 280" class="sales-chart" role="img" aria-label="Sales by month">
+      <defs>
+        <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#34d399" />
+          <stop offset="100%" stop-color="#0f766e" />
+        </linearGradient>
+      </defs>
+      <g class="grid"><line x1="56" y1="238.0" x2="542" y2="238.0" /><text x="46" y="242.0">0</text><line x1="56" y1="183.5" x2="542" y2="183.5" /><text x="46" y="187.5">45</text><line x1="56" y1="129.0" x2="542" y2="129.0" /><text x="46" y="133.0">90</text><line x1="56" y1="74.5" x2="542" y2="74.5" /><text x="46" y="78.5">135</text><line x1="56" y1="20.0" x2="542" y2="20.0" /><text x="46" y="24.0">180</text></g>
+      <g class="bars"><rect x="90.8" y="116.9" width="52.0" height="121.1" rx="14" /><rect x="212.2" y="56.3" width="52.0" height="181.7" rx="14" /><rect x="333.8" y="92.7" width="52.0" height="145.3" rx="14" /><rect x="455.2" y="20.0" width="52.0" height="218.0" rx="14" /></g>
+      <g class="value-labels"><text x="116.8" y="106.9" class="value-label">100</text><text x="238.2" y="46.3" class="value-label">150</text><text x="359.8" y="82.7" class="value-label">120</text><text x="481.2" y="16.0" class="value-label">180</text></g>
+      <g class="labels"><text x="116.8" y="266" class="axis-label">Jan</text><text x="238.2" y="266" class="axis-label">Feb</text><text x="359.8" y="266" class="axis-label">Mar</text><text x="481.2" y="266" class="axis-label">Apr</text></g>
+    </svg>
+    
+      </article>
+      <article class="panel">
+        <h2>Sales by Region</h2>
+        <p class="panel-copy">Regional contribution split based on the aggregated sales totals.</p>
+        
+    <div class="donut-wrap">
+      <div class="donut-chart" style="background: conic-gradient(#0f766e 0.00% 40.00%, #f59e0b 40.00% 100.00%);">
+        <div class="donut-hole">
+          <span>Total</span>
+          <strong>550</strong>
+        </div>
+      </div>
+      <div class="legend"><div class="legend-item"><span class="legend-swatch" style="background:#0f766e"></span><span>North</span><strong>40.0%</strong></div><div class="legend-item"><span class="legend-swatch" style="background:#f59e0b"></span><span>South</span><strong>60.0%</strong></div></div>
+    </div>
+    
+      </article>
+    </section>
+
+    <section class="suggestions">
+      <article class="panel">
+        <h2>AI Suggestions</h2>
+        <p class="panel-copy">Structured dashboard recommendations generated from the local model.</p>
+        <ol><li>1. Bar chart: Sales by Month (column A vs B)</li><li>2. Pie chart: Sales by Region using total sales per region</li><li>3. Summary table: Total sales by region</li></ol>
+      </article>
+      <article class="panel">
+        <h2>Region Summary</h2>
+        <p class="panel-copy">Chart-ready aggregated totals exported to <code>region_totals.csv</code>.</p>
+        <table><thead><tr><th>Region</th><th>Sales</th></tr></thead><tbody><tr><td>North</td><td>220</td></tr><tr><td>South</td><td>330</td></tr></tbody></table>
+      </article>
+    </section>
+
+    <section class="panel" style="margin-top: 18px;">
+      <h2>Source Data</h2>
+      <p class="panel-copy">Cleaned records exported to <code>ai_dashboard_data.csv</code>.</p>
+      <table><thead><tr><th>Month</th><th>Sales</th><th>Region</th></tr></thead><tbody><tr><td>Jan</td><td>100</td><td>North</td></tr><tr><td>Feb</td><td>150</td><td>South</td></tr><tr><td>Mar</td><td>120</td><td>North</td></tr><tr><td>Apr</td><td>180</td><td>South</td></tr></tbody></table>
+      <div class="footer-note">Generated from local files in this project folder.</div>
+    </section>
+  </div>
+</body>
+</html>
