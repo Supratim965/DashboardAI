@@ -1,4 +1,4 @@
-import html
+import json
 from pathlib import Path
 import random
 
@@ -11,12 +11,8 @@ OUTPUT_SITE_HTML = OUTPUT_SITE_DIR / "index.html"
 OUTPUT_NOJEKYLL = OUTPUT_SITE_DIR / ".nojekyll"
 OUTPUT_DATA_DIR = Path("dashboard_exports")
 OUTPUT_DATA_CSV = OUTPUT_DATA_DIR / "sales_performance_dataset.csv"
-OUTPUT_REP_CSV = OUTPUT_DATA_DIR / "top_sales_reps.csv"
-OUTPUT_YEAR_CSV = OUTPUT_DATA_DIR / "yearly_summary.csv"
 
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-MONTH_ORDER = {month: index for index, month in enumerate(MONTHS, start=1)}
-PALETTE = ["#0f766e", "#f59e0b", "#dc2626", "#2563eb", "#7c3aed", "#16a34a", "#ea580c", "#0891b2"]
 
 
 def build_sales_dataframe():
@@ -88,422 +84,207 @@ def build_sales_dataframe():
     })
 
 
-def format_currency(value):
-    return f"${value:,.0f}"
-
-
-def format_number(value):
-    if isinstance(value, float):
-        if value.is_integer():
-            return f"{int(value):,}"
-        return f"{value:,.2f}"
-    return f"{value:,}"
-
-
-def build_line_chart(title, labels, values):
-    width = 640
-    height = 320
-    left = 60
-    right = 24
-    top = 24
-    bottom = 46
-    inner_width = width - left - right
-    inner_height = height - top - bottom
-    max_value = max(max(values), 1.0)
-
-    points = []
-    label_nodes = []
-    grid_nodes = []
-    value_nodes = []
-    for step in range(5):
-        tick_value = max_value * step / 4
-        y = top + inner_height - (tick_value / max_value) * inner_height
-        grid_nodes.append(
-            f'<line x1="{left}" y1="{y:.1f}" x2="{width - right}" y2="{y:.1f}" />'
-            f'<text x="{left - 10}" y="{y + 4:.1f}">{html.escape(format_currency(tick_value))}</text>'
-        )
-
-    for index, (label, value) in enumerate(zip(labels, values)):
-        x = left + (inner_width / max(len(values) - 1, 1)) * index
-        y = top + inner_height - (value / max_value) * inner_height
-        points.append((x, y))
-        label_nodes.append(f'<text x="{x:.1f}" y="{height - 16}" class="axis-label">{html.escape(str(label))}</text>')
-        value_nodes.append(f'<text x="{x:.1f}" y="{max(y - 12, 14):.1f}" class="value-label">{html.escape(format_currency(value))}</text>')
-
-    path = " ".join(f"{'M' if index == 0 else 'L'} {x:.1f} {y:.1f}" for index, (x, y) in enumerate(points))
-    area = path + f" L {points[-1][0]:.1f} {top + inner_height:.1f} L {points[0][0]:.1f} {top + inner_height:.1f} Z"
-    circles = "".join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" />' for x, y in points)
-
-    return f"""
-    <article class="panel">
-      <h3>{html.escape(title)}</h3>
-      <svg viewBox="0 0 {width} {height}" class="chart" role="img" aria-label="{html.escape(title)}">
-        <defs>
-          <linearGradient id="trendArea" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="rgba(15, 118, 110, 0.38)" />
-            <stop offset="100%" stop-color="rgba(15, 118, 110, 0.02)" />
-          </linearGradient>
-        </defs>
-        <g class="grid">{''.join(grid_nodes)}</g>
-        <path d="{area}" fill="rgba(15, 118, 110, 0.14)"></path>
-        <path d="{path}" fill="none" stroke="#0f766e" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
-        <g class="line-points">{circles}</g>
-        <g class="value-labels">{''.join(value_nodes)}</g>
-        <g class="labels">{''.join(label_nodes)}</g>
-      </svg>
-    </article>
-    """
-
-
-def build_horizontal_bar_chart(title, labels, values, formatter):
-    width = 520
-    row_height = 52
-    height = 56 + len(values) * row_height
-    left = 148
-    right = 28
-    bar_height = 24
-    max_value = max(max(values), 1.0)
-
-    bars = []
-    for index, (label, value) in enumerate(zip(labels, values)):
-        y = 26 + index * row_height
-        bar_width = (value / max_value) * (width - left - right)
-        color = PALETTE[index % len(PALETTE)]
-        bars.append(
-            f'<text x="12" y="{y + 16:.1f}" class="bar-label">{html.escape(str(label))}</text>'
-            f'<rect x="{left}" y="{y:.1f}" width="{bar_width:.1f}" height="{bar_height}" rx="12" fill="{color}" />'
-            f'<text x="{left + bar_width + 10:.1f}" y="{y + 16:.1f}" class="bar-value">{html.escape(formatter(value))}</text>'
-        )
-
-    return f"""
-    <article class="panel">
-      <h3>{html.escape(title)}</h3>
-      <svg viewBox="0 0 {width} {height}" class="chart" role="img" aria-label="{html.escape(title)}">
-        {''.join(bars)}
-      </svg>
-    </article>
-    """
-
-
-def build_donut_chart(title, labels, values):
-    total = float(sum(values)) or 1.0
-    cursor = 0.0
-    segments = []
-    legend_items = []
-    for index, (label, value) in enumerate(zip(labels, values)):
-        share = float(value) / total
-        next_cursor = cursor + share * 100
-        color = PALETTE[index % len(PALETTE)]
-        segments.append(f"{color} {cursor:.2f}% {next_cursor:.2f}%")
-        legend_items.append(
-            "<div class=\"legend-item\">"
-            f"<span class=\"legend-swatch\" style=\"background:{color}\"></span>"
-            f"<span>{html.escape(str(label))}</span>"
-            f"<strong>{share * 100:.1f}%</strong>"
-            "</div>"
-        )
-        cursor = next_cursor
-
-    return f"""
-    <article class="panel">
-      <h3>{html.escape(title)}</h3>
-      <div class="donut-wrap">
-        <div class="donut-chart" style="background: conic-gradient({', '.join(segments)});">
-          <div class="donut-hole">
-            <span>Total</span>
-            <strong>{html.escape(format_currency(total))}</strong>
-          </div>
-        </div>
-        <div class="legend">{''.join(legend_items)}</div>
-      </div>
-    </article>
-    """
-
-
-def build_table(headers, rows):
-    header_html = "".join(f"<th>{html.escape(str(header))}</th>" for header in headers)
-    body_rows = []
-    for row in rows:
-        cells = "".join(f"<td>{html.escape(str(cell))}</td>" for cell in row)
-        body_rows.append(f"<tr>{cells}</tr>")
-    return (
-        "<table><thead><tr>"
-        + header_html
-        + "</tr></thead><tbody>"
-        + "".join(body_rows)
-        + "</tbody></table>"
-    )
-
-
-def render_dashboard(df):
-    df = df.copy()
-    df["Month Order"] = df["Month"].map(MONTH_ORDER)
-    df["Period"] = df["Year"].astype(str) + "-" + df["Month"]
-
-    monthly_sales = (
-        df.groupby(["Year", "Month", "Month Order"], as_index=False)["Net Sales ($)"]
-        .sum()
-        .sort_values(["Year", "Month Order"])
-    )
-    trend_labels = (monthly_sales["Year"].astype(str) + " " + monthly_sales["Month"]).tolist()
-    trend_values = monthly_sales["Net Sales ($)"].tolist()
-
-    category_share = (
-        df.groupby("Category", as_index=False)["Net Sales ($)"]
-        .sum()
-        .sort_values("Net Sales ($)", ascending=False)
-    )
-    region_profit = (
-        df.groupby("Region", as_index=False)["Profit ($)"]
-        .sum()
-        .sort_values("Profit ($)", ascending=False)
-    )
-    customer_satisfaction = (
-        df.groupby("Customer Type", as_index=False)["Customer Satisfaction"]
-        .mean()
-        .sort_values("Customer Satisfaction", ascending=False)
-    )
-    top_reps = (
-        df.groupby("Sales Rep", as_index=False)
-        .agg({
-            "Net Sales ($)": "sum",
-            "Profit ($)": "sum",
-            "Units Sold": "sum",
-        })
-        .sort_values("Net Sales ($)", ascending=False)
-        .head(6)
-    )
-    yearly_summary = (
-        df.groupby("Year", as_index=False)
-        .agg({
-            "Net Sales ($)": "sum",
-            "Profit ($)": "sum",
-            "Units Sold": "sum",
-            "Customer Satisfaction": "mean",
-        })
-        .sort_values("Year")
-    )
-    top_products = (
-        df.groupby(["Product", "Category"], as_index=False)
-        .agg({
-            "Net Sales ($)": "sum",
-            "Profit ($)": "sum",
-            "Units Sold": "sum",
-        })
-        .sort_values("Net Sales ($)", ascending=False)
-        .head(8)
-    )
-
-    total_net_sales = float(df["Net Sales ($)"].sum())
-    total_profit = float(df["Profit ($)"].sum())
-    total_units = int(df["Units Sold"].sum())
-    avg_margin = float(df["Profit Margin (%)"].mean())
-    avg_satisfaction = float(df["Customer Satisfaction"].mean())
-    best_region = region_profit.iloc[0]
-
-    hero_cards = [
-        ("Net Sales", format_currency(total_net_sales), "After discounts across all orders"),
-        ("Profit", format_currency(total_profit), f"{(total_profit / total_net_sales) * 100:.1f}% of net sales"),
-        ("Units Sold", format_number(total_units), "Total units moved"),
-        ("Avg Margin", f"{avg_margin:.1f}%", "Average profit margin"),
-        ("Satisfaction", f"{avg_satisfaction:.2f}/5", "Average customer rating"),
-        ("Top Region", str(best_region["Region"]), f"{format_currency(float(best_region['Profit ($)']))} profit"),
-    ]
-    hero_cards_html = "".join(
-        "<div class=\"card\">"
-        f"<div class=\"eyebrow\">{html.escape(label)}</div>"
-        f"<div class=\"metric\">{html.escape(value)}</div>"
-        f"<div class=\"metric-note\">{html.escape(note)}</div>"
-        "</div>"
-        for label, value, note in hero_cards
-    )
-
-    top_rep_rows = [
-        [
-            row["Sales Rep"],
-            format_currency(float(row["Net Sales ($)"])),
-            format_currency(float(row["Profit ($)"])),
-            format_number(int(row["Units Sold"])),
-        ]
-        for _, row in top_reps.iterrows()
-    ]
-    year_rows = [
-        [
-            int(row["Year"]),
-            format_currency(float(row["Net Sales ($)"])),
-            format_currency(float(row["Profit ($)"])),
-            format_number(int(row["Units Sold"])),
-            f"{float(row['Customer Satisfaction']):.2f}/5",
-        ]
-        for _, row in yearly_summary.iterrows()
-    ]
-    product_rows = [
-        [
-            row["Product"],
-            row["Category"],
-            format_currency(float(row["Net Sales ($)"])),
-            format_currency(float(row["Profit ($)"])),
-            format_number(int(row["Units Sold"])),
-        ]
-        for _, row in top_products.iterrows()
-    ]
-
-    return f"""<!DOCTYPE html>
+def build_html(dataset_json):
+    template = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Executive Sales Command Center</title>
+  <title>Interactive Sales Command Center</title>
   <style>
-    :root {{
-      --ink: #182126;
-      --muted: #5d6a72;
-      --gold: #d6a54b;
+    :root {
+      --ink: #192227;
+      --muted: #5f6d75;
       --teal: #0f766e;
+      --teal-2: #34d399;
       --amber: #f59e0b;
-      --cream: #f8f2e8;
-      --panel: rgba(255, 251, 245, 0.84);
-      --line: rgba(24, 33, 38, 0.12);
-      --shadow: 0 26px 70px rgba(24, 33, 38, 0.16);
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
+      --red: #dc2626;
+      --blue: #2563eb;
+      --gold: #d6a54b;
+      --paper: rgba(255, 251, 245, 0.84);
+      --line: rgba(25, 34, 39, 0.12);
+      --shadow: 0 26px 70px rgba(25, 34, 39, 0.15);
+    }
+    * { box-sizing: border-box; }
+    body {
       margin: 0;
       font-family: "Trebuchet MS", "Segoe UI Variable Text", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(circle at top left, rgba(214, 165, 75, 0.22), transparent 28%),
-        radial-gradient(circle at top right, rgba(15, 118, 110, 0.22), transparent 30%),
-        linear-gradient(145deg, #f8f2e8 0%, #f3f4ef 56%, #e8f0ee 100%);
+        radial-gradient(circle at top left, rgba(214, 165, 75, 0.20), transparent 26%),
+        radial-gradient(circle at top right, rgba(15, 118, 110, 0.20), transparent 28%),
+        linear-gradient(145deg, #f8f2e8 0%, #f3f4ef 55%, #e7f0ee 100%);
       min-height: 100vh;
-    }}
-    .shell {{
-      max-width: 1280px;
+    }
+    .shell {
+      max-width: 1320px;
       margin: 0 auto;
-      padding: 34px 20px 60px;
-    }}
-    .hero, .panel, .card {{
-      background: var(--panel);
+      padding: 32px 20px 64px;
+    }
+    .hero, .panel, .card, .filter-card {
+      background: var(--paper);
       border: 1px solid rgba(255,255,255,0.82);
       border-radius: 28px;
       box-shadow: var(--shadow);
       backdrop-filter: blur(14px);
-    }}
-    .hero {{
+    }
+    .hero {
       position: relative;
       overflow: hidden;
-      padding: 34px;
-    }}
-    .hero::after {{
+      padding: 32px;
+    }
+    .hero::after {
       content: "";
       position: absolute;
-      width: 320px;
-      height: 320px;
-      right: -70px;
-      bottom: -120px;
+      width: 340px;
+      height: 340px;
+      right: -80px;
+      bottom: -140px;
       border-radius: 999px;
-      background: radial-gradient(circle, rgba(214, 165, 75, 0.24), rgba(214, 165, 75, 0.02));
-    }}
-    h1, h2, h3 {{
+      background: radial-gradient(circle, rgba(214, 165, 75, 0.22), rgba(214, 165, 75, 0.02));
+    }
+    h1, h2, h3 {
       margin: 0;
       font-family: "Palatino Linotype", "Book Antiqua", Georgia, serif;
-    }}
-    h1 {{
-      font-size: clamp(2.4rem, 4vw, 4.2rem);
+    }
+    h1 {
+      font-size: clamp(2.4rem, 4vw, 4.25rem);
       line-height: 0.92;
       max-width: 11ch;
-    }}
-    h2 {{
-      font-size: 1.9rem;
-    }}
-    h3 {{
-      font-size: 1.24rem;
+    }
+    h2 {
+      font-size: 1.7rem;
+      margin-bottom: 6px;
+    }
+    h3 {
+      font-size: 1.18rem;
       margin-bottom: 12px;
-    }}
-    .eyebrow {{
+    }
+    .eyebrow {
       color: var(--muted);
       font-size: 0.78rem;
       letter-spacing: 0.14em;
       text-transform: uppercase;
-    }}
-    .hero-copy, .panel-copy {{
-      max-width: 64ch;
-      margin: 16px 0 0;
+    }
+    .hero-copy, .panel-copy {
       color: var(--muted);
       line-height: 1.65;
-    }}
-    .kpis {{
+    }
+    .hero-copy {
+      max-width: 64ch;
+      margin: 16px 0 0;
+    }
+    .filters {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 22px;
+    }
+    .filter-card {
+      padding: 14px;
+      border-radius: 20px;
+    }
+    .filter-card label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .filter-card select,
+    .filter-card input,
+    .filter-card button {
+      width: 100%;
+      border: 1px solid rgba(25, 34, 39, 0.12);
+      border-radius: 14px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.74);
+      color: var(--ink);
+      font: inherit;
+    }
+    .filter-card button {
+      cursor: pointer;
+      background: linear-gradient(135deg, #0f766e, #0d9488);
+      border: 0;
+      color: #fff;
+      font-weight: 700;
+      margin-top: 22px;
+    }
+    .active-summary {
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 16px;
       margin-top: 24px;
-    }}
-    .card {{
+    }
+    .card {
       padding: 18px 18px 16px;
-    }}
-    .metric {{
+    }
+    .metric {
       margin-top: 8px;
-      font-size: 1.9rem;
+      font-size: 1.95rem;
       font-weight: 700;
-    }}
-    .metric-note {{
+    }
+    .metric-note {
       margin-top: 6px;
       color: var(--muted);
       font-size: 0.92rem;
-    }}
-    .grid {{
+    }
+    .grid {
       display: grid;
-      grid-template-columns: 1.25fr 0.95fr;
       gap: 18px;
       margin-top: 22px;
-    }}
-    .grid.three {{
+    }
+    .grid.two {
+      grid-template-columns: 1.2fr 0.8fr;
+    }
+    .grid.three {
       grid-template-columns: repeat(3, minmax(0, 1fr));
-    }}
-    .panel {{
+    }
+    .panel {
       padding: 22px;
-    }}
-    .chart {{
+    }
+    .chart {
       width: 100%;
       height: auto;
       display: block;
-    }}
-    .chart .grid line {{
-      stroke: rgba(24, 33, 38, 0.10);
+    }
+    .chart .grid-line {
+      stroke: rgba(25, 34, 39, 0.10);
       stroke-width: 1;
-    }}
-    .chart .grid text, .axis-label, .bar-label {{
+    }
+    .chart .grid-label,
+    .chart .axis-label,
+    .chart .bar-label {
       fill: var(--muted);
       font-size: 11px;
-    }}
-    .axis-label, .value-label {{
-      text-anchor: middle;
-    }}
-    .value-label, .bar-value {{
+    }
+    .chart .value-label,
+    .chart .bar-value {
       fill: var(--ink);
       font-size: 11px;
       font-weight: 700;
-    }}
-    .line-points circle {{
-      fill: #ffffff;
-      stroke: var(--teal);
-      stroke-width: 3;
-    }}
-    .donut-wrap {{
+    }
+    .donut-wrap {
       display: grid;
       gap: 18px;
       align-items: center;
       justify-items: center;
-    }}
-    .donut-chart {{
+    }
+    .donut-chart {
       width: min(300px, 72vw);
       aspect-ratio: 1;
       border-radius: 50%;
       display: grid;
       place-items: center;
       box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35);
-    }}
-    .donut-hole {{
+    }
+    .donut-hole {
       width: 56%;
       aspect-ratio: 1;
       border-radius: 50%;
@@ -511,24 +292,24 @@ def render_dashboard(df):
       display: grid;
       place-items: center;
       text-align: center;
-      box-shadow: inset 0 0 0 1px rgba(24, 33, 38, 0.08);
-    }}
-    .donut-hole span {{
+      box-shadow: inset 0 0 0 1px rgba(25, 34, 39, 0.08);
+    }
+    .donut-hole span {
       color: var(--muted);
       font-size: 0.82rem;
       letter-spacing: 0.08em;
       text-transform: uppercase;
-    }}
-    .donut-hole strong {{
+    }
+    .donut-hole strong {
       font-size: 1.65rem;
       line-height: 1;
-    }}
-    .legend {{
+    }
+    .legend {
       width: 100%;
       display: grid;
       gap: 10px;
-    }}
-    .legend-item {{
+    }
+    .legend-item {
       display: grid;
       grid-template-columns: 14px 1fr auto;
       gap: 10px;
@@ -536,135 +317,532 @@ def render_dashboard(df):
       padding: 10px 12px;
       border-radius: 14px;
       background: rgba(255,255,255,0.56);
-      border: 1px solid rgba(24, 33, 38, 0.07);
-    }}
-    .legend-swatch {{
+      border: 1px solid rgba(25, 34, 39, 0.07);
+    }
+    .legend-swatch {
       width: 14px;
       height: 14px;
       border-radius: 999px;
-    }}
-    table {{
+    }
+    table {
       width: 100%;
       border-collapse: collapse;
       margin-top: 10px;
       font-size: 0.95rem;
-    }}
-    th, td {{
+    }
+    th, td {
       padding: 12px 14px;
       border-bottom: 1px solid var(--line);
       text-align: left;
       vertical-align: top;
-    }}
-    th {{
+    }
+    th {
       background: rgba(15, 118, 110, 0.08);
       color: var(--muted);
       font-size: 0.82rem;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-    }}
-    .footer-note {{
+    }
+    .empty-state {
+      padding: 36px 18px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .footer-note {
       margin-top: 14px;
       color: var(--muted);
       font-size: 0.92rem;
-    }}
-    @media (max-width: 980px) {{
-      .grid, .grid.three {{
+    }
+    @media (max-width: 1180px) {
+      .filters,
+      .kpis {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 920px) {
+      .grid.two,
+      .grid.three,
+      .filters,
+      .kpis {
         grid-template-columns: 1fr;
-      }}
-      .hero {{
-        padding: 26px;
-      }}
-    }}
+      }
+      .hero {
+        padding: 24px;
+      }
+    }
   </style>
 </head>
 <body>
   <div class="shell">
     <section class="hero">
-      <div class="eyebrow">Executive Sales Command Center</div>
-      <h1>High-value sales performance, margin, and momentum</h1>
-      <p class="hero-copy">This dashboard is generated directly from the synthetic enterprise sales dataframe in your code. It focuses on revenue quality, profitability, commercial execution, and customer sentiment across years, regions, products, and sales reps.</p>
-      <div class="kpis">{hero_cards_html}</div>
+      <div class="eyebrow">Interactive Sales Command Center</div>
+      <h1>Filter, slice, and interrogate sales performance live</h1>
+      <p class="hero-copy">This dashboard runs entirely in your browser from the embedded dataframe. Change the filters and every KPI, chart, and table will recalculate instantly.</p>
+
+      <div class="filters">
+        <div class="filter-card">
+          <label for="yearFilter">Year</label>
+          <select id="yearFilter"></select>
+        </div>
+        <div class="filter-card">
+          <label for="regionFilter">Region</label>
+          <select id="regionFilter"></select>
+        </div>
+        <div class="filter-card">
+          <label for="categoryFilter">Category</label>
+          <select id="categoryFilter"></select>
+        </div>
+        <div class="filter-card">
+          <label for="customerTypeFilter">Customer Type</label>
+          <select id="customerTypeFilter"></select>
+        </div>
+        <div class="filter-card">
+          <label for="monthFilter">Month</label>
+          <select id="monthFilter"></select>
+        </div>
+        <div class="filter-card">
+          <label for="searchFilter">Search Product / Rep</label>
+          <input id="searchFilter" type="text" placeholder="Phone, Alice, Router..." />
+        </div>
+      </div>
+      <div class="filters" style="grid-template-columns: 180px;">
+        <div class="filter-card">
+          <button id="resetFilters">Reset Filters</button>
+        </div>
+      </div>
+      <div id="activeSummary" class="active-summary"></div>
+
+      <div class="kpis">
+        <div class="card"><div class="eyebrow">Net Sales</div><div id="kpiNetSales" class="metric"></div><div id="kpiNetSalesNote" class="metric-note"></div></div>
+        <div class="card"><div class="eyebrow">Profit</div><div id="kpiProfit" class="metric"></div><div id="kpiProfitNote" class="metric-note"></div></div>
+        <div class="card"><div class="eyebrow">Units Sold</div><div id="kpiUnits" class="metric"></div><div id="kpiUnitsNote" class="metric-note"></div></div>
+        <div class="card"><div class="eyebrow">Avg Margin</div><div id="kpiMargin" class="metric"></div><div id="kpiMarginNote" class="metric-note"></div></div>
+        <div class="card"><div class="eyebrow">Satisfaction</div><div id="kpiSatisfaction" class="metric"></div><div id="kpiSatisfactionNote" class="metric-note"></div></div>
+        <div class="card"><div class="eyebrow">Orders</div><div id="kpiOrders" class="metric"></div><div id="kpiOrdersNote" class="metric-note"></div></div>
+      </div>
     </section>
 
-    <section class="grid">
-      {build_line_chart("Net Sales Trend by Month", trend_labels, trend_values)}
-      {build_donut_chart("Category Revenue Mix", category_share["Category"].tolist(), category_share["Net Sales ($)"].tolist())}
+    <section class="grid two">
+      <article class="panel">
+        <h2>Net Sales Trend</h2>
+        <p class="panel-copy">Monthly momentum updates based on the current filter state.</p>
+        <div id="trendChart"></div>
+      </article>
+      <article class="panel">
+        <h2>Revenue Mix by Category</h2>
+        <p class="panel-copy">Where revenue is concentrated after filters are applied.</p>
+        <div id="categoryDonut"></div>
+      </article>
     </section>
 
     <section class="grid three">
-      {build_horizontal_bar_chart("Regional Profit Contribution", region_profit["Region"].tolist(), region_profit["Profit ($)"].tolist(), format_currency)}
-      {build_horizontal_bar_chart("Customer Satisfaction by Segment", customer_satisfaction["Customer Type"].tolist(), customer_satisfaction["Customer Satisfaction"].tolist(), lambda value: f"{value:.2f}/5")}
-      {build_horizontal_bar_chart("Top Sales Reps by Net Sales", top_reps["Sales Rep"].tolist(), top_reps["Net Sales ($)"].tolist(), format_currency)}
+      <article class="panel">
+        <h2>Regional Profit</h2>
+        <p class="panel-copy">Profit pool allocation across regions.</p>
+        <div id="regionProfitChart"></div>
+      </article>
+      <article class="panel">
+        <h2>Top Sales Reps</h2>
+        <p class="panel-copy">Leading reps by filtered net sales.</p>
+        <div id="repChart"></div>
+      </article>
+      <article class="panel">
+        <h2>Customer Satisfaction</h2>
+        <p class="panel-copy">Average score by customer type.</p>
+        <div id="satisfactionChart"></div>
+      </article>
     </section>
 
-    <section class="grid">
+    <section class="grid two">
       <article class="panel">
-        <h3>Top Sales Reps</h3>
-        {build_table(["Sales Rep", "Net Sales", "Profit", "Units Sold"], top_rep_rows)}
+        <h2>Top Products</h2>
+        <p class="panel-copy">Best commercial performers under the current filters.</p>
+        <div id="topProductsTable"></div>
       </article>
       <article class="panel">
-        <h3>Yearly Summary</h3>
-        {build_table(["Year", "Net Sales", "Profit", "Units Sold", "Avg Satisfaction"], year_rows)}
-      </article>
-    </section>
-
-    <section class="grid">
-      <article class="panel">
-        <h3>Best-Selling Products</h3>
-        {build_table(["Product", "Category", "Net Sales", "Profit", "Units Sold"], product_rows)}
-      </article>
-      <article class="panel">
-        <h3>Data Footprint</h3>
-        <p class="panel-copy">The generated dataset contains {len(df):,} rows across {len(df.columns)} fields. Raw exports are written to <code>dashboard_exports</code>, and this same page is mirrored to <code>docs/index.html</code> for GitHub Pages publishing.</p>
-        {build_table(
-            ["Field", "Meaning"],
-            [
-                ["Net Sales ($)", "Revenue after the applied discount"],
-                ["Profit ($)", "Net sales minus estimated cost"],
-                ["Profit Margin (%)", "Profit as a percentage of net sales"],
-                ["Customer Satisfaction", "Synthetic 1-5 customer rating"],
-                ["Customer Type", "Retail, Corporate, Government, or SMB account"],
-            ],
-        )}
-        <div class="footer-note">Rerun the script after changing the dataframe definition to rebuild the entire dashboard.</div>
+        <h2>Yearly Summary</h2>
+        <p class="panel-copy">Rollup metrics by year for the selected slice.</p>
+        <div id="yearSummaryTable"></div>
+        <div class="footer-note">The dashboard is self-contained and mirrored to <code>docs/index.html</code> for GitHub Pages.</div>
       </article>
     </section>
   </div>
+
+  <script>
+    const rawData = __DATASET__;
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const monthOrder = Object.fromEntries(months.map((month, index) => [month, index]));
+    const palette = ["#0f766e", "#f59e0b", "#dc2626", "#2563eb", "#7c3aed", "#16a34a", "#ea580c", "#0891b2"];
+
+    const controls = {
+      year: document.getElementById("yearFilter"),
+      region: document.getElementById("regionFilter"),
+      category: document.getElementById("categoryFilter"),
+      customerType: document.getElementById("customerTypeFilter"),
+      month: document.getElementById("monthFilter"),
+      search: document.getElementById("searchFilter"),
+      reset: document.getElementById("resetFilters")
+    };
+
+    function formatCurrency(value) {
+      return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value || 0);
+    }
+
+    function formatNumber(value) {
+      return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value || 0);
+    }
+
+    function formatPercent(value) {
+      return `${formatNumber(value)}%`;
+    }
+
+    function groupBy(items, keyFn, valueFn) {
+      const map = new Map();
+      for (const item of items) {
+        const key = keyFn(item);
+        const current = map.get(key) || 0;
+        map.set(key, current + valueFn(item));
+      }
+      return map;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function optionValues(field) {
+      const values = [...new Set(rawData.map(row => row[field]))];
+      if (field === "Month") {
+        return values.sort((a, b) => monthOrder[a] - monthOrder[b]);
+      }
+      return values.sort();
+    }
+
+    function fillSelect(select, values) {
+      select.innerHTML = `<option value="All">All</option>` + values.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("");
+    }
+
+    function initializeControls() {
+      fillSelect(controls.year, optionValues("Year"));
+      fillSelect(controls.region, optionValues("Region"));
+      fillSelect(controls.category, optionValues("Category"));
+      fillSelect(controls.customerType, optionValues("Customer Type"));
+      fillSelect(controls.month, months);
+
+      Object.values(controls).forEach(control => {
+        if (control && control.tagName !== "BUTTON") {
+          control.addEventListener("input", renderDashboard);
+          control.addEventListener("change", renderDashboard);
+        }
+      });
+
+      controls.reset.addEventListener("click", () => {
+        controls.year.value = "All";
+        controls.region.value = "All";
+        controls.category.value = "All";
+        controls.customerType.value = "All";
+        controls.month.value = "All";
+        controls.search.value = "";
+        renderDashboard();
+      });
+    }
+
+    function getFilteredData() {
+      const search = controls.search.value.trim().toLowerCase();
+      return rawData.filter(row => {
+        if (controls.year.value !== "All" && String(row["Year"]) !== controls.year.value) return false;
+        if (controls.region.value !== "All" && row["Region"] !== controls.region.value) return false;
+        if (controls.category.value !== "All" && row["Category"] !== controls.category.value) return false;
+        if (controls.customerType.value !== "All" && row["Customer Type"] !== controls.customerType.value) return false;
+        if (controls.month.value !== "All" && row["Month"] !== controls.month.value) return false;
+        if (search) {
+          const haystack = `${row["Product"]} ${row["Sales Rep"]}`.toLowerCase();
+          if (!haystack.includes(search)) return false;
+        }
+        return true;
+      });
+    }
+
+    function setActiveSummary(rows) {
+      const filters = [];
+      [["Year", controls.year.value], ["Region", controls.region.value], ["Category", controls.category.value], ["Customer Type", controls.customerType.value], ["Month", controls.month.value]].forEach(([label, value]) => {
+        if (value !== "All") filters.push(`${label}: ${value}`);
+      });
+      if (controls.search.value.trim()) filters.push(`Search: ${controls.search.value.trim()}`);
+      const filterText = filters.length ? filters.join(" | ") : "No filters applied";
+      document.getElementById("activeSummary").textContent = `${rows.length.toLocaleString()} orders in view. ${filterText}.`;
+    }
+
+    function updateKpis(rows) {
+      const netSales = rows.reduce((sum, row) => sum + row["Net Sales ($)"], 0);
+      const profit = rows.reduce((sum, row) => sum + row["Profit ($)"], 0);
+      const units = rows.reduce((sum, row) => sum + row["Units Sold"], 0);
+      const avgMargin = rows.length ? rows.reduce((sum, row) => sum + row["Profit Margin (%)"], 0) / rows.length : 0;
+      const avgSatisfaction = rows.length ? rows.reduce((sum, row) => sum + row["Customer Satisfaction"], 0) / rows.length : 0;
+      const avgOrderValue = rows.length ? netSales / rows.length : 0;
+
+      document.getElementById("kpiNetSales").textContent = formatCurrency(netSales);
+      document.getElementById("kpiNetSalesNote").textContent = `${formatCurrency(avgOrderValue)} average order value`;
+      document.getElementById("kpiProfit").textContent = formatCurrency(profit);
+      document.getElementById("kpiProfitNote").textContent = `${formatPercent(netSales ? (profit / netSales) * 100 : 0)} of net sales`;
+      document.getElementById("kpiUnits").textContent = formatNumber(units);
+      document.getElementById("kpiUnitsNote").textContent = rows.length ? `${formatNumber(units / rows.length)} units per order` : "No rows selected";
+      document.getElementById("kpiMargin").textContent = formatPercent(avgMargin);
+      document.getElementById("kpiMarginNote").textContent = "Average filtered margin";
+      document.getElementById("kpiSatisfaction").textContent = `${formatNumber(avgSatisfaction)}/5`;
+      document.getElementById("kpiSatisfactionNote").textContent = "Average customer score";
+      document.getElementById("kpiOrders").textContent = formatNumber(rows.length);
+      document.getElementById("kpiOrdersNote").textContent = `${formatNumber(new Set(rows.map(row => row["Sales Rep"])).size)} reps represented`;
+    }
+
+    function emptyMarkup(message) {
+      return `<div class="empty-state">${escapeHtml(message)}</div>`;
+    }
+
+    function renderLineChart(containerId, title, points) {
+      const container = document.getElementById(containerId);
+      if (!points.length) {
+        container.innerHTML = emptyMarkup("No trend data for the current filter selection.");
+        return;
+      }
+
+      const width = 640;
+      const height = 320;
+      const left = 60;
+      const right = 24;
+      const top = 24;
+      const bottom = 46;
+      const innerWidth = width - left - right;
+      const innerHeight = height - top - bottom;
+      const maxValue = Math.max(...points.map(point => point.value), 1);
+
+      const grid = [];
+      for (let i = 0; i < 5; i += 1) {
+        const tick = maxValue * i / 4;
+        const y = top + innerHeight - (tick / maxValue) * innerHeight;
+        grid.push(`<line class="grid-line" x1="${left}" y1="${y.toFixed(1)}" x2="${width - right}" y2="${y.toFixed(1)}"></line>`);
+        grid.push(`<text class="grid-label" x="${left - 10}" y="${(y + 4).toFixed(1)}" text-anchor="end">${escapeHtml(formatCurrency(tick))}</text>`);
+      }
+
+      const coords = points.map((point, index) => {
+        const x = left + (innerWidth / Math.max(points.length - 1, 1)) * index;
+        const y = top + innerHeight - (point.value / maxValue) * innerHeight;
+        return { ...point, x, y };
+      });
+
+      const linePath = coords.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" ");
+      const areaPath = `${linePath} L ${coords[coords.length - 1].x.toFixed(1)} ${(top + innerHeight).toFixed(1)} L ${coords[0].x.toFixed(1)} ${(top + innerHeight).toFixed(1)} Z`;
+      const circles = coords.map(point => `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="5" fill="#fff" stroke="#0f766e" stroke-width="3"></circle>`).join("");
+      const axis = coords.map(point => `<text class="axis-label" x="${point.x.toFixed(1)}" y="${height - 16}" text-anchor="middle">${escapeHtml(point.label)}</text>`).join("");
+      const values = coords.map(point => `<text class="value-label" x="${point.x.toFixed(1)}" y="${Math.max(point.y - 12, 14).toFixed(1)}" text-anchor="middle">${escapeHtml(formatCurrency(point.value))}</text>`).join("");
+
+      container.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" class="chart" role="img" aria-label="${escapeHtml(title)}">
+          <g>${grid.join("")}</g>
+          <path d="${areaPath}" fill="rgba(15, 118, 110, 0.14)"></path>
+          <path d="${linePath}" fill="none" stroke="#0f766e" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
+          <g>${circles}</g>
+          <g>${values}</g>
+          <g>${axis}</g>
+        </svg>
+      `;
+    }
+
+    function renderBarChart(containerId, items, formatter) {
+      const container = document.getElementById(containerId);
+      if (!items.length) {
+        container.innerHTML = emptyMarkup("No grouped data for the current filter selection.");
+        return;
+      }
+
+      const width = 520;
+      const rowHeight = 52;
+      const height = 56 + items.length * rowHeight;
+      const left = 150;
+      const right = 28;
+      const maxValue = Math.max(...items.map(item => item.value), 1);
+
+      const rows = items.map((item, index) => {
+        const y = 26 + index * rowHeight;
+        const barWidth = (item.value / maxValue) * (width - left - right);
+        const color = palette[index % palette.length];
+        return `
+          <text class="bar-label" x="12" y="${(y + 16).toFixed(1)}">${escapeHtml(item.label)}</text>
+          <rect x="${left}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="24" rx="12" fill="${color}"></rect>
+          <text class="bar-value" x="${(left + barWidth + 10).toFixed(1)}" y="${(y + 16).toFixed(1)}">${escapeHtml(formatter(item.value))}</text>
+        `;
+      }).join("");
+
+      container.innerHTML = `<svg viewBox="0 0 ${width} ${height}" class="chart">${rows}</svg>`;
+    }
+
+    function renderDonut(containerId, items) {
+      const container = document.getElementById(containerId);
+      if (!items.length) {
+        container.innerHTML = emptyMarkup("No category mix data for the current filter selection.");
+        return;
+      }
+
+      const total = items.reduce((sum, item) => sum + item.value, 0) || 1;
+      let cursor = 0;
+      const segments = [];
+      const legend = [];
+      items.forEach((item, index) => {
+        const share = item.value / total;
+        const next = cursor + share * 100;
+        const color = palette[index % palette.length];
+        segments.push(`${color} ${cursor.toFixed(2)}% ${next.toFixed(2)}%`);
+        legend.push(`
+          <div class="legend-item">
+            <span class="legend-swatch" style="background:${color}"></span>
+            <span>${escapeHtml(item.label)}</span>
+            <strong>${escapeHtml(formatNumber(share * 100))}%</strong>
+          </div>
+        `);
+        cursor = next;
+      });
+
+      container.innerHTML = `
+        <div class="donut-wrap">
+          <div class="donut-chart" style="background: conic-gradient(${segments.join(", ")});">
+            <div class="donut-hole">
+              <span>Total</span>
+              <strong>${escapeHtml(formatCurrency(total))}</strong>
+            </div>
+          </div>
+          <div class="legend">${legend.join("")}</div>
+        </div>
+      `;
+    }
+
+    function renderTable(containerId, headers, rows) {
+      const container = document.getElementById(containerId);
+      if (!rows.length) {
+        container.innerHTML = emptyMarkup("No rows to display for the current filter selection.");
+        return;
+      }
+
+      const head = headers.map(header => `<th>${escapeHtml(header)}</th>`).join("");
+      const body = rows.map(row => `<tr>${row.map(cell => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("");
+      container.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    }
+
+    function aggregateTrend(rows) {
+      const grouped = groupBy(rows, row => `${row["Year"]}-${row["Month"]}`, row => row["Net Sales ($)"]);
+      return [...grouped.entries()]
+        .map(([key, value]) => {
+          const [year, month] = key.split("-");
+          return { year: Number(year), month, label: `${year} ${month}`, value };
+        })
+        .sort((a, b) => a.year - b.year || monthOrder[a.month] - monthOrder[b.month]);
+    }
+
+    function aggregateBar(rows, key, metric, limit = 6) {
+      const grouped = groupBy(rows, row => row[key], row => row[metric]);
+      return [...grouped.entries()]
+        .map(([label, value]) => ({ label, value }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, limit);
+    }
+
+    function aggregateAverage(rows, key, metric, limit = 6) {
+      const grouped = new Map();
+      rows.forEach(row => {
+        const current = grouped.get(row[key]) || { total: 0, count: 0 };
+        current.total += row[metric];
+        current.count += 1;
+        grouped.set(row[key], current);
+      });
+      return [...grouped.entries()]
+        .map(([label, value]) => ({ label, value: value.count ? value.total / value.count : 0 }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, limit);
+    }
+
+    function buildTopProducts(rows) {
+      const grouped = new Map();
+      rows.forEach(row => {
+        const key = `${row["Product"]}__${row["Category"]}`;
+        const current = grouped.get(key) || { product: row["Product"], category: row["Category"], netSales: 0, profit: 0, units: 0 };
+        current.netSales += row["Net Sales ($)"];
+        current.profit += row["Profit ($)"];
+        current.units += row["Units Sold"];
+        grouped.set(key, current);
+      });
+      return [...grouped.values()]
+        .sort((a, b) => b.netSales - a.netSales)
+        .slice(0, 8)
+        .map(item => [
+          item.product,
+          item.category,
+          formatCurrency(item.netSales),
+          formatCurrency(item.profit),
+          formatNumber(item.units)
+        ]);
+    }
+
+    function buildYearSummary(rows) {
+      const grouped = new Map();
+      rows.forEach(row => {
+        const current = grouped.get(row["Year"]) || { year: row["Year"], netSales: 0, profit: 0, units: 0, satisfaction: 0, count: 0 };
+        current.netSales += row["Net Sales ($)"];
+        current.profit += row["Profit ($)"];
+        current.units += row["Units Sold"];
+        current.satisfaction += row["Customer Satisfaction"];
+        current.count += 1;
+        grouped.set(row["Year"], current);
+      });
+      return [...grouped.values()]
+        .sort((a, b) => a.year - b.year)
+        .map(item => [
+          item.year,
+          formatCurrency(item.netSales),
+          formatCurrency(item.profit),
+          formatNumber(item.units),
+          `${formatNumber(item.count ? item.satisfaction / item.count : 0)}/5`
+        ]);
+    }
+
+    function renderDashboard() {
+      const rows = getFilteredData();
+      setActiveSummary(rows);
+      updateKpis(rows);
+
+      renderLineChart("trendChart", "Net Sales Trend", aggregateTrend(rows));
+      renderDonut("categoryDonut", aggregateBar(rows, "Category", "Net Sales ($)", 6));
+      renderBarChart("regionProfitChart", aggregateBar(rows, "Region", "Profit ($)", 5), formatCurrency);
+      renderBarChart("repChart", aggregateBar(rows, "Sales Rep", "Net Sales ($)", 6), formatCurrency);
+      renderBarChart("satisfactionChart", aggregateAverage(rows, "Customer Type", "Customer Satisfaction", 4), value => `${formatNumber(value)}/5`);
+      renderTable("topProductsTable", ["Product", "Category", "Net Sales", "Profit", "Units Sold"], buildTopProducts(rows));
+      renderTable("yearSummaryTable", ["Year", "Net Sales", "Profit", "Units Sold", "Avg Satisfaction"], buildYearSummary(rows));
+    }
+
+    initializeControls();
+    renderDashboard();
+  </script>
 </body>
 </html>
 """
+    return template.replace("__DATASET__", dataset_json)
 
 
 df = build_sales_dataframe()
+records = json.dumps(df.to_dict(orient="records"), separators=(",", ":"))
+html_output = build_html(records)
+
 OUTPUT_DATA_DIR.mkdir(exist_ok=True)
 df.to_csv(OUTPUT_DATA_CSV, index=False)
-
-top_reps_export = (
-    df.groupby("Sales Rep", as_index=False)
-    .agg({"Net Sales ($)": "sum", "Profit ($)": "sum", "Units Sold": "sum"})
-    .sort_values("Net Sales ($)", ascending=False)
-)
-top_reps_export.to_csv(OUTPUT_REP_CSV, index=False)
-
-year_summary_export = (
-    df.groupby("Year", as_index=False)
-    .agg({
-        "Net Sales ($)": "sum",
-        "Profit ($)": "sum",
-        "Units Sold": "sum",
-        "Customer Satisfaction": "mean",
-    })
-    .sort_values("Year")
-)
-year_summary_export.to_csv(OUTPUT_YEAR_CSV, index=False)
-
-html_output = render_dashboard(df)
 OUTPUT_HTML.write_text(html_output, encoding="utf-8")
 OUTPUT_SITE_DIR.mkdir(exist_ok=True)
 OUTPUT_SITE_HTML.write_text(html_output, encoding="utf-8")
 OUTPUT_NOJEKYLL.write_text("", encoding="utf-8")
 
 print(f"Dataset generated: {len(df):,} rows x {len(df.columns)} columns")
-print(f"HTML dashboard saved: {OUTPUT_HTML.resolve()}")
+print(f"Interactive HTML dashboard saved: {OUTPUT_HTML.resolve()}")
 print(f"Shareable site entry saved: {OUTPUT_SITE_HTML.resolve()}")
 print(f"Dataset CSV saved: {OUTPUT_DATA_CSV.resolve()}")
